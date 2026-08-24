@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Inter', sans-serif;
+  color-scheme: dark;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.font-display {
+  font-family: 'Chakra Petch', sans-serif;
+}
+
+/* Cyber Glassmorphism & UI Panels */
+.glass-panel {
+  background: rgba(10, 15, 29, 0.78);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(56, 189, 248, 0.15);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.glass-panel-glow {
+  background: rgba(10, 20, 32, 0.85);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 255, 170, 0.35);
+  box-shadow: 0 0 25px rgba(0, 255, 170, 0.15), inset 0 0 15px rgba(0, 255, 170, 0.05);
+}
+
+.glass-panel-danger {
+  background: rgba(25, 10, 18, 0.85);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 42, 95, 0.4);
+  box-shadow: 0 0 25px rgba(255, 42, 95, 0.15);
+}
+
+/* Custom Cyber Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(10, 15, 29, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 255, 170, 0.6);
+}
+
+/* High-tech Grid Background Pattern */
+.bg-grid-pattern {
+  background-image: radial-gradient(rgba(56, 189, 248, 0.12) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Neon Text Glows */
+.glow-text-cyan {
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.6), 0 0 20px rgba(0, 240, 255, 0.3);
+}
+
+.glow-text-emerald {
+  text-shadow: 0 0 10px rgba(0, 255, 170, 0.7), 0 0 25px rgba(0, 255, 170, 0.4);
+}
+
+.glow-text-red {
+  text-shadow: 0 0 10px rgba(255, 42, 95, 0.7), 0 0 25px rgba(255, 42, 95, 0.4);
+}
+
+/* Quantum Pulse Wave */
+@keyframes wavePulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(0, 255, 170, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 15px rgba(0, 255, 170, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(0, 255, 170, 0);
+  }
+}
+
+.animate-wave-pulse {
+  animation: wavePulse 2s infinite;
+}
+
+/* Mapbox canvas override */
+.mapboxgl-canvas, .maplibregl-canvas {
+  outline: none;
+}

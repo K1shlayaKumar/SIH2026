@@ -1,0 +1,11 @@
+{
+  "name": "sih-quantum-traffic-route-optimization",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Smart India Hackathon: Quantum-Inspired Intelligent Traffic Route Optimization",
+  "scripts": {
+    "server": "npm --prefix server start",
+    "client": "npm --prefix client run dev",
+    "dev": "npm run server & npm run client"
+  }
+}
