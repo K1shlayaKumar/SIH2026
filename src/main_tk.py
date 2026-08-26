@@ -13,12 +13,27 @@ from qpso_algo import metaheuristic_qpso_route, qpso_optimize_traffic_lights, ca
 # ============================================================
 # 1. AUTO-SNAP GRAPH & POLYLINE BUILDER
 # ============================================================
-try:
-    with open("map_coordinates.json", "r") as f:
-        map_data = json.load(f)
-except FileNotFoundError:
-    print("ERROR: map_coordinates.json not found! Please run map_extractor.py first.")
-    exit()
+from pathlib import Path
+
+possible_json_paths = [
+    Path(__file__).resolve().parent / "map_coordinates.json",
+    Path("map_coordinates.json"),
+    Path(__file__).resolve().parent.parent / "map_coordinates.json"
+]
+
+json_path = None
+for p in possible_json_paths:
+    if p.exists():
+        json_path = p
+        break
+
+if json_path is None:
+    raise FileNotFoundError("map_coordinates.json not found! Please run map_extractor.py first.")
+
+with open(json_path, "r") as f:
+    map_data = json.load(f)
+
+print(f"Successfully loaded active map from: {json_path.resolve()}")
 
 img_w = map_data["image_size"]["width"]
 img_h = map_data["image_size"]["height"]

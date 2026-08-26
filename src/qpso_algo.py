@@ -3,14 +3,12 @@ import heapq
 import random
 import numpy as np
 
-
 # ============================================================
 # UTILITIES & DISTANCE MATH
 # ============================================================
 def calculate_dist(p1, p2):
     """Calculates Euclidean distance between two coordinate points."""
     return math.hypot(p2[0] - p1[0], p2[1] - p1[1])
-
 
 def get_shortest_path(graph, start, target):
     """Standard Dijkstra fallback."""
@@ -28,7 +26,6 @@ def get_shortest_path(graph, start, target):
             if neighbor not in visited:
                 heapq.heappush(queue, (cost + weight, neighbor, path))
     return [start, target]
-
 
 def get_noisy_shortest_path(noisy_graph, start, target):
     """Exploration routing with randomized dynamic weights."""
@@ -49,30 +46,64 @@ def get_noisy_shortest_path(noisy_graph, start, target):
 
 
 # ============================================================
+# DYNAMIC GRAPH CENTRALITY
+# ============================================================
+_node_centrality_cache = {}
+
+def get_centrality(node, points, roads):
+    if not _node_centrality_cache:
+        # Calculate degree centrality on first run
+        counts = {n: 0 for n in points}
+        for u, v in roads:
+            counts[u] = counts.get(u, 0) + 1
+            counts[v] = counts.get(v, 0) + 1
+        
+        if counts:
+            max_deg = max(counts.values())
+            for n, c in counts.items():
+                _node_centrality_cache[n] = c / max_deg if max_deg > 0 else 0
+    return _node_centrality_cache.get(node, 0.0)
+
+
+# ============================================================
 # 1. LOWER LEVEL: VEHICLE ROUTING WITH DYNAMIC SIGNAL COST
 # ============================================================
-def metaheuristic_qpso_route(start, target, traffic_lights_state, points, roads):
+def metaheuristic_qpso_route(start, target, traffic_lights_state, points, roads, blocked_edges=None, is_emergency=False):
     """Calculates optimal path considering current signal phases and highway hierarchy."""
     if start == target:
         return [start]
+    
+    blocked_edges = blocked_edges or set()
     candidate_paths = []
 
     # 1. Candidate exploration
     for _ in range(12):
         noisy_graph = {node: {} for node in points}
         for u, v in roads:
+            # Check roadblock
+            if (u, v) in blocked_edges or (v, u) in blocked_edges:
+                continue # Edge is blocked, don't add to noisy graph
+                
             d = calculate_dist(points[u], points[v])
             noise = random.uniform(0.92, 1.08)
 
-            # Prefer major arterial rings and corridors
-            is_main_road = (u in ["J13", "J14", "J15", "J16", "J17", "J18", "J19", "J20"] or
-                            v in ["J13", "J14", "J15", "J16", "J17", "J18", "J19", "J20"])
+            # Prefer nodes with high centrality (major roads)
+            c_u = get_centrality(u, points, roads)
+            c_v = get_centrality(v, points, roads)
+            is_main_road = (c_u > 0.5 or c_v > 0.5)
+            
             hierarchy_penalty = 1.0 if is_main_road else 1.35
+            
+            if is_emergency:
+                hierarchy_penalty = 1.0 # Emergencies ignore hierarchy
 
             signal_delay = 0.0
             if v in traffic_lights_state:
-                if traffic_lights_state[v]["state"] == "RED":
-                    signal_delay = 70.0
+                state = traffic_lights_state[v]["state"]
+                if state == "RED":
+                    signal_delay = 10.0 if is_emergency else 70.0
+                elif state == "YELLOW":
+                    signal_delay = 0.0 if is_emergency else 30.0
                 else:
                     signal_delay = -20.0
 
@@ -85,13 +116,19 @@ def metaheuristic_qpso_route(start, target, traffic_lights_state, points, roads)
             candidate_paths.append(path)
 
     if not candidate_paths:
+        # Fallback to shortest path on non-blocked edges
         graph = {node: {} for node in points}
         for u, v in roads:
+            if (u, v) in blocked_edges or (v, u) in blocked_edges:
+                continue
             d = calculate_dist(points[u], points[v])
             graph[u][v] = graph[v][u] = d
-        return get_shortest_path(graph, start, target)
+        path = get_shortest_path(graph, start, target)
+        if len(path) <= 2 and path[0] != start and path[-1] != target: # unreachable
+             return [start]
+        return path
 
-        # 2. QPSO Swarm Selection
+    # 2. QPSO Swarm Selection
     num_particles, dim = 10, 1
     X = np.random.uniform(0, len(candidate_paths) - 1, (num_particles, dim))
     P_best, P_scores = np.copy(X), np.full(num_particles, np.inf)
@@ -104,8 +141,11 @@ def metaheuristic_qpso_route(start, target, traffic_lights_state, points, roads)
             u, v = path[i], path[i + 1]
             cost += calculate_dist(points[u], points[v])
             if v in traffic_lights_state:
-                if traffic_lights_state[v]["state"] == "RED":
-                    cost += 70.0
+                state = traffic_lights_state[v]["state"]
+                if state == "RED":
+                    cost += 10.0 if is_emergency else 70.0
+                elif state == "YELLOW":
+                    cost += 0.0 if is_emergency else 30.0
                 else:
                     cost -= 20.0
         return cost
@@ -153,13 +193,16 @@ def qpso_optimize_traffic_lights(vehicles, traffic_lights, points):
         num_green = sum(1 for val in state if val > 0)
         cost += num_green * 20.0
 
-        # 2. Green Wave axis alignment reward
+        # 2. Green Wave axis alignment reward (Vector Based)
         green_nodes = [light_keys[i] for i, val in enumerate(state) if val > 0]
         for i in range(len(green_nodes)):
             for j in range(i + 1, len(green_nodes)):
                 n1, n2 = green_nodes[i], green_nodes[j]
                 p1, p2 = points[n1], points[n2]
-                if p1[0] == p2[0] or p1[1] == p2[1]:
+                
+                # Check alignment using angle
+                dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+                if abs(dx) < 5.0 or abs(dy) < 5.0: # Roughly horizontal or vertical
                     cost -= 15.0
 
         # 3. Bi-level feedback: immediate queue + upcoming path intent
@@ -172,14 +215,21 @@ def qpso_optimize_traffic_lights(vehicles, traffic_lights, points):
                 idx = light_keys.index(v.next_node)
                 is_green = state[idx] > 0
                 dist_to_junction = (1.0 - v.progress) * calculate_dist(points[v.curr_node], points[v.next_node])
+                
+                is_emergency = getattr(v, 'v_type', 'STANDARD') == 'EMERGENCY'
 
                 if not is_green:
-                    if v.v < 0.05 and dist_to_junction < 15.0:
+                    if is_emergency:
+                        # Massive penalty for keeping an emergency vehicle waiting at a red light
+                        cost += 5000.0 / (dist_to_junction + 1.0)
+                    elif v.v < 0.05 and dist_to_junction < 15.0:
                         cost += 550.0 / (dist_to_junction + 1.0)
                     else:
                         cost += 120.0 / (dist_to_junction + 1.0)
                 else:
-                    if v.v > 0.12:
+                    if is_emergency:
+                        cost -= 2000.0 / (dist_to_junction + 1.0) # Massive reward for green for emergency
+                    elif v.v > 0.12:
                         cost -= 140.0 / (dist_to_junction + 1.0)
 
             # Predictive ETA for downstream junctions along the vehicle's planned path
@@ -189,7 +239,9 @@ def qpso_optimize_traffic_lights(vehicles, traffic_lights, points):
                     f_idx = light_keys.index(node_name)
                     if state[f_idx] > 0:
                         # Reward green corridors for high-density routes
-                        cost -= 25.0 / hop
+                        is_emergency = getattr(v, 'v_type', 'STANDARD') == 'EMERGENCY'
+                        multiplier = 10.0 if is_emergency else 1.0
+                        cost -= (25.0 * multiplier) / hop
 
         return cost
 
