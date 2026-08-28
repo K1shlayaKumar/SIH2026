@@ -325,6 +325,7 @@ export default function TrafficMap({
             if (d.manualOverride === "FORCE_RED" || d.phase === "ALL_RED") return [225, 29, 72, 230];
             if (d.manualOverride === "FORCE_GREEN" || d.phase === "NS_GREEN") return [16, 185, 129, 240];
             if (d.phase === "YELLOW") return [245, 158, 11, 240];
+            if (d.phase === "EW_GREEN") return [225, 29, 72, 230]; // Red
             return [16, 185, 129, 230];
           },
           getLineWidth: 2.5,
@@ -348,7 +349,8 @@ export default function TrafficMap({
             if (d.manualOverride === "FORCE_RED" || d.phase === "ALL_RED") return [225, 29, 72, 255];
             if (d.manualOverride === "FORCE_GREEN") return [0, 200, 120, 255];
             if (d.phase === "YELLOW") return [245, 158, 11, 255];
-            if (d.phase === "NS_GREEN") return [16, 185, 129, 255];
+            if (d.phase === "NS_GREEN") return [16, 185, 129, 255]; // Green
+            if (d.phase === "EW_GREEN") return [225, 29, 72, 255]; // Red
             return [2, 132, 199, 255];
           },
           getLineColor: [255, 255, 255, 255],

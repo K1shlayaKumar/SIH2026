@@ -7,6 +7,7 @@ import {
   interpolatePath,
   getBearing,
 } from "./grid.js";
+import { QPSOOptimizer } from "./qpso.js";
 
 export class TrafficEngine {
   constructor() {
@@ -16,6 +17,8 @@ export class TrafficEngine {
       phase: Math.random() > 0.5 ? "NS_GREEN" : "EW_GREEN",
       timer: Math.floor(Math.random() * 15) + 10,
       phaseDuration: 24,
+      nsGreenDuration: 24,
+      ewGreenDuration: 24,
       yellowDuration: 3,
       manualOverride: null,
       queueCount: 0,
@@ -35,6 +38,10 @@ export class TrafficEngine {
 
     this.rerouteEvents = [];
     this.rerouteIdCounter = 0;
+    
+    this.qpso = new QPSOOptimizer(this.intersections.length);
+    this.qpsoRunTimer = 0;
+    this.latestQPSOConvergence = [];
 
     this.initVehicles();
   }
@@ -61,18 +68,22 @@ export class TrafficEngine {
     const laneIndex = (id % 2); // 2 lanes for clean visibility
     const laneOffsetRatio = (laneIndex - 0.5) * 0.000045;
 
-    // Distinct colors for prominent cars
-    const CAR_COLORS = [
-      [14, 165, 233],  // Sky Blue
-      [249, 115, 22],  // Amber Orange
-      [168, 85, 247],  // Purple
-      [236, 72, 153],  // Pink
-      [6, 182, 212],   // Cyan
-      [234, 179, 8],   // Yellow
-      [16, 185, 129],  // Emerald
-      [239, 68, 68],   // Red
-    ];
-    const color = CAR_COLORS[(id - 1) % CAR_COLORS.length];
+    const isAmbulance = id === 1;
+    let color;
+    if (isAmbulance) {
+      color = [255, 0, 0]; // Red for Ambulance
+    } else {
+      const CAR_COLORS = [
+        [14, 165, 233],  // Sky Blue
+        [249, 115, 22],  // Amber Orange
+        [168, 85, 247],  // Purple
+        [236, 72, 153],  // Pink
+        [6, 182, 212],   // Cyan
+        [234, 179, 8],   // Yellow
+        [16, 185, 129],  // Emerald
+      ];
+      color = CAR_COLORS[(id - 2 + CAR_COLORS.length) % CAR_COLORS.length];
+    }
 
     return {
       id: `Car-${id}`,
@@ -90,6 +101,7 @@ export class TrafficEngine {
       status: "flowing", // 'flowing' | 'slow' | 'congested' | 'quantum_rerouted'
       waitTime: 0,
       isRerouted: false,
+      isAmbulance,
       rerouteReason: null,
       destId: destNode.id,
       destName: destNode.name,
@@ -147,28 +159,10 @@ export class TrafficEngine {
 
         let cost = geoDistance;
 
-        if (useQuantum) {
-          // Quantum QUBO Optimization:
-          // Heavy penalty on central intersection (INT-5)
-          const queuePenalty = (queueMap.get(neighborId) || 0) * 140;
-          let bottleneckPenalty = 0;
-          if (neighborId === "INT-5") {
-            bottleneckPenalty = 600;
-          }
-
-          // Quantum bypass rewards (Outer Ring)
-          let bypassReward = 0;
-          if (neighborId !== "INT-5") {
-            bypassReward = -300;
-          }
-
-          cost = Math.max(10, geoDistance + queuePenalty + bottleneckPenalty + bypassReward);
-        } else {
-          // Classical Unoptimized Cost:
-          // Vehicles blindly take the center as primary direct corridor
-          if (neighborId === "INT-5") {
-            cost = geoDistance * 0.25; // Greedy bias toward central intersection
-          }
+        // Classical Unoptimized Cost:
+        // Vehicles blindly take the center as primary direct corridor
+        if (neighborId === "INT-5") {
+          cost = geoDistance * 0.25; // Greedy bias toward central intersection
         }
 
         const alt = distances.get(currentId) + cost;
@@ -254,18 +248,17 @@ export class TrafficEngine {
       intersection.timer -= dt;
 
       if (this.isQuantumOptimized) {
-        // Adaptive Green Waves
-        const isQueued = intersection.queueCount > 2;
+        // QPSO Optimized Green Waves
         if (intersection.timer <= 0) {
           if (intersection.phase === "NS_GREEN") {
             intersection.phase = "YELLOW";
             intersection.timer = intersection.yellowDuration;
           } else if (intersection.phase === "YELLOW") {
             intersection.phase = "EW_GREEN";
-            intersection.timer = isQueued ? 24 : 16;
+            intersection.timer = intersection.ewGreenDuration || 16;
           } else {
             intersection.phase = "NS_GREEN";
-            intersection.timer = isQueued ? 26 : 18;
+            intersection.timer = intersection.nsGreenDuration || 18;
           }
         }
       } else {
@@ -290,6 +283,36 @@ export class TrafficEngine {
   update(dt = 0.04) {
     this.simulationTime += dt;
     this.updateSignals(dt);
+
+    if (this.isQuantumOptimized) {
+      this.qpsoRunTimer -= dt;
+      if (this.qpsoRunTimer <= 0) {
+        this.qpsoRunTimer = 5; // Run optimizer every 5 seconds
+        
+        let ambulanceState = null;
+        const ambulance = this.vehicles.find(v => v.isAmbulance);
+        if (ambulance && ambulance.route && ambulance.routeStep < ambulance.route.length) {
+          const segmentId = ambulance.route[ambulance.routeStep];
+          const segment = this.roadMap.get(segmentId);
+          if (segment) {
+            const bearing = ambulance.heading;
+            const isNorthSouth = (bearing >= 315 || bearing <= 45) || (bearing >= 135 && bearing <= 225);
+            ambulanceState = {
+              targetIntersectionId: segment.to,
+              direction: isNorthSouth ? "NS" : "EW"
+            };
+          }
+        }
+
+        const result = this.qpso.optimize(this.intersections, ambulanceState);
+        this.latestQPSOConvergence = result.convergence;
+        
+        this.intersections.forEach((inter, idx) => {
+          inter.nsGreenDuration = result.bestTimings[idx];
+          inter.ewGreenDuration = Math.max(10, inter.cycleLength - inter.nsGreenDuration - inter.yellowDuration);
+        });
+      }
+    }
 
     const intersectionQueues = new Map();
     this.intersections.forEach((i) => intersectionQueues.set(i.id, 0));
@@ -425,16 +448,7 @@ export class TrafficEngine {
         this.totalThroughputCount++;
         toNode.throughput++;
 
-        // Dynamic quantum re-routing check at intersection
-        if (this.isQuantumOptimized && veh.routeStep < veh.route.length) {
-          const nextStart = toNode.id;
-          const newRoute = this.calculateRoute(nextStart, veh.destId, true);
-          if (newRoute.length > 0 && newRoute[0] !== veh.route[veh.routeStep]) {
-            veh.route = newRoute;
-            veh.routeStep = 0;
-            veh.isRerouted = true;
-          }
-        }
+        // Vehicles continue on their original path, no dynamic re-routing.
       }
 
       // Lateral lane offset for realism
@@ -450,62 +464,22 @@ export class TrafficEngine {
     });
   }
 
-  // Toggle Quantum Optimization with Dynamic Visual Re-routing on the Street Ground
+  // Toggle Quantum Optimization with Dynamic Traffic Lights
   setOptimization(enabled) {
     this.isQuantumOptimized = Boolean(enabled);
     const timeStr = new Date().toLocaleTimeString("en-US", { hour12: false });
 
     if (this.isQuantumOptimized) {
-      let rerouteCount = 0;
-
-      this.vehicles.forEach((veh) => {
-        if (veh.route && veh.routeStep < veh.route.length) {
-          const currentSegment = this.roadMap.get(veh.route[veh.routeStep]);
-          if (currentSegment) {
-            const currentNode = currentSegment.to;
-            const originalNext = veh.route[veh.routeStep + 1];
-            const newRoute = this.calculateRoute(currentNode, veh.destId, true);
-
-            // If a different/optimal bypass route was found
-            if (newRoute.length > 0) {
-              const isDetoured = newRoute[0] !== originalNext;
-              veh.route = newRoute;
-              veh.routeStep = 0;
-              veh.segmentProgress = Math.min(0.2, veh.segmentProgress);
-              veh.isRerouted = true;
-              veh.status = "quantum_rerouted";
-
-              if (isDetoured && rerouteCount < 10) {
-                rerouteCount++;
-                this.rerouteIdCounter++;
-                const bypassName = this.roadMap.get(newRoute[0])?.streetName || "Outer Ring Bypass";
-                this.rerouteEvents.unshift({
-                  id: `re-${this.rerouteIdCounter}`,
-                  vehicleId: veh.id,
-                  divertedTo: bypassName,
-                  avoidedBottleneck: "Central Ave",
-                  timeSavedMin: +(2.8 + Math.random() * 3.8).toFixed(1),
-                  time: timeStr,
-                });
-              }
-            }
-          }
-        }
+      this.rerouteIdCounter++;
+      this.rerouteEvents.unshift({
+        id: `re-${this.rerouteIdCounter}`,
+        vehicleId: "SYSTEM",
+        divertedTo: "Traffic Lights Synchronized",
+        avoidedBottleneck: "City-wide",
+        timeSavedMin: +(2.8 + Math.random() * 3.8).toFixed(1),
+        time: timeStr,
       });
-
       this.rerouteEvents = this.rerouteEvents.slice(0, 15);
-    } else {
-      // Revert to classical shortest paths
-      this.vehicles.forEach((veh) => {
-        veh.isRerouted = false;
-        if (veh.route && veh.routeStep < veh.route.length) {
-          const currentSegment = this.roadMap.get(veh.route[veh.routeStep]);
-          if (currentSegment) {
-            veh.route = this.calculateRoute(currentSegment.to, veh.destId, false);
-            veh.routeStep = 0;
-          }
-        }
-      });
     }
   }
 
@@ -544,9 +518,16 @@ export class TrafficEngine {
 
     const hotspots = this.intersections.filter((i) => i.queueCount > 2).length;
 
-    const quantumConvergence = this.isQuantumOptimized
-      ? +(98.4 + Math.sin(this.simulationTime * 0.3) * 1.0).toFixed(1)
-      : +(22.0 + Math.cos(this.simulationTime * 0.2) * 2.5).toFixed(1);
+    // Use actual convergence data if available, mapped to a 0-100 metric for the UI
+    let quantumConvergence = 0;
+    if (this.isQuantumOptimized && this.latestQPSOConvergence.length > 0) {
+      const best = this.latestQPSOConvergence[this.latestQPSOConvergence.length - 1];
+      // Map fitness penalty to a percentage (0 penalty = 100%, 200 penalty = ~80%)
+      quantumConvergence = Math.max(50, 100 - (best * 0.1));
+      quantumConvergence = +quantumConvergence.toFixed(1);
+    } else {
+      quantumConvergence = +(22.0 + Math.cos(this.simulationTime * 0.2) * 2.5).toFixed(1);
+    }
 
     return {
       locality: "Indiranagar - Domlur, Bengaluru",
@@ -558,6 +539,7 @@ export class TrafficEngine {
         co2Reduction,
         hotspots,
         quantumConvergence,
+        qpsoConvergenceData: this.isQuantumOptimized ? this.latestQPSOConvergence : [],
         totalVehicles: this.vehicles.length,
         congestedVehicles: congestedCount,
         reroutedVehicles: reroutedCount,
